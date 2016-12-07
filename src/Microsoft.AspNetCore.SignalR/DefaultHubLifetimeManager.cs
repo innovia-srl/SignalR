@@ -21,7 +21,7 @@ namespace Microsoft.AspNetCore.SignalR
             _registry = registry;
         }
 
-        public override Task AddGroupAsync(Connection connection, string groupName)
+        public override Task AddGroupAsync(StreamingConnection connection, string groupName)
         {
             var groups = connection.Metadata.GetOrAdd("groups", _ => new HashSet<string>());
 
@@ -33,7 +33,7 @@ namespace Microsoft.AspNetCore.SignalR
             return TaskCache.CompletedTask;
         }
 
-        public override Task RemoveGroupAsync(Connection connection, string groupName)
+        public override Task RemoveGroupAsync(StreamingConnection connection, string groupName)
         {
             var groups = connection.Metadata.Get<HashSet<string>>("groups");
 
@@ -50,7 +50,7 @@ namespace Microsoft.AspNetCore.SignalR
             return InvokeAllWhere(methodName, args, c => true);
         }
 
-        private Task InvokeAllWhere(string methodName, object[] args, Func<Connection, bool> include)
+        private Task InvokeAllWhere(string methodName, object[] args, Func<StreamingConnection, bool> include)
         {
             var tasks = new List<Task>(_connections.Count);
             var message = new InvocationDescriptor
@@ -60,7 +60,7 @@ namespace Microsoft.AspNetCore.SignalR
             };
 
             // TODO: serialize once per format by providing a different stream?
-            foreach (var connection in _connections)
+            foreach (var connection in _connections.Cast<StreamingConnection>())
             {
                 if (!include(connection))
                 {
@@ -69,7 +69,7 @@ namespace Microsoft.AspNetCore.SignalR
 
                 var invocationAdapter = _registry.GetInvocationAdapter(connection.Metadata.Get<string>("formatType"));
 
-                tasks.Add(invocationAdapter.WriteMessageAsync(message, connection.Channel.GetStream()));
+                tasks.Add(invocationAdapter.WriteMessageAsync(message, connection.Transport.GetStream()));
             }
 
             return Task.WhenAll(tasks);
@@ -77,7 +77,7 @@ namespace Microsoft.AspNetCore.SignalR
 
         public override Task InvokeConnectionAsync(string connectionId, string methodName, object[] args)
         {
-            var connection = _connections[connectionId];
+            var connection = (StreamingConnection)_connections[connectionId];
 
             var invocationAdapter = _registry.GetInvocationAdapter(connection.Metadata.Get<string>("formatType"));
 
@@ -87,7 +87,7 @@ namespace Microsoft.AspNetCore.SignalR
                 Arguments = args
             };
 
-            return invocationAdapter.WriteMessageAsync(message, connection.Channel.GetStream());
+            return invocationAdapter.WriteMessageAsync(message, connection.Transport.GetStream());
         }
 
         public override Task InvokeGroupAsync(string groupName, string methodName, object[] args)
@@ -107,13 +107,13 @@ namespace Microsoft.AspNetCore.SignalR
             });
         }
 
-        public override Task OnConnectedAsync(Connection connection)
+        public override Task OnConnectedAsync(StreamingConnection connection)
         {
             _connections.Add(connection);
             return TaskCache.CompletedTask;
         }
 
-        public override Task OnDisconnectedAsync(Connection connection)
+        public override Task OnDisconnectedAsync(StreamingConnection connection)
         {
             _connections.Remove(connection);
             return TaskCache.CompletedTask;

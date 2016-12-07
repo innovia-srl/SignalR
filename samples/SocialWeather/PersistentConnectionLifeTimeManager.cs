@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO.Pipelines;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Sockets;
 
@@ -28,10 +29,10 @@ namespace SocialWeather
 
         public async Task SendToAllAsync<T>(T data)
         {
-            foreach (var connection in _connectionList)
+            foreach (var connection in _connectionList.Cast<StreamingConnection>())
             {
                 var formatter = _formatterResolver.GetFormatter<T>(connection.Metadata.Get<string>("formatType"));
-                await formatter.WriteAsync(data, connection.Channel.GetStream());
+                await formatter.WriteAsync(data, connection.Transport.GetStream());
             }
         }
 

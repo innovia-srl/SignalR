@@ -2,21 +2,23 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.IO.Pipelines;
+using System.Threading;
 using System.Threading.Tasks;
+using System.Threading.Tasks.Channels;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
-namespace Microsoft.AspNetCore.Sockets
+namespace Microsoft.AspNetCore.Sockets.Transports
 {
-    public class ServerSentEvents : IHttpTransport
+    public class ServerSentEventsTransport : IHttpTransport
     {
-        private readonly HttpConnection _channel;
-        private readonly Connection _connection;
+        private readonly IReadableChannel<Message> _application;
+        private readonly ILogger _logger;
 
-        public ServerSentEvents(Connection connection)
+        public ServerSentEventsTransport(IReadableChannel<Message> application, ILoggerFactory loggerFactory)
         {
-            _connection = connection;
-            _channel = (HttpConnection)connection.Channel;
+            _application = application;
+            _logger = loggerFactory.CreateLogger<ServerSentEventsTransport>();
         }
 
         public async Task ProcessRequestAsync(HttpContext context)
@@ -26,27 +28,21 @@ namespace Microsoft.AspNetCore.Sockets
             context.Response.Headers["Content-Encoding"] = "identity";
             await context.Response.Body.FlushAsync();
 
-            while (true)
+            while (!_application.Completion.IsCompleted)
             {
-                var result = await _channel.Output.ReadAsync();
-                var buffer = result.Buffer;
-
-                if (buffer.IsEmpty && result.IsCompleted)
+                using (var message = await _application.ReadAsync())
                 {
-                    break;
+                    await Send(context, message);
                 }
-
-                await Send(context, buffer);
-
-                _channel.Output.Advance(buffer.End);
             }
         }
 
-        private async Task Send(HttpContext context, ReadableBuffer data)
+        private async Task Send(HttpContext context, Message message)
         {
             // TODO: Pooled buffers
             // 8 = 6(data: ) + 2 (\n\n)
-            var buffer = new byte[8 + data.Length];
+            _logger.LogDebug("Sending {0} byte message to Server-Sent Events client", message.Payload.Buffer.Length);
+            var buffer = new byte[8 + message.Payload.Buffer.Length];
             var at = 0;
             buffer[at++] = (byte)'d';
             buffer[at++] = (byte)'a';
@@ -54,8 +50,8 @@ namespace Microsoft.AspNetCore.Sockets
             buffer[at++] = (byte)'a';
             buffer[at++] = (byte)':';
             buffer[at++] = (byte)' ';
-            data.CopyTo(new Span<byte>(buffer, at, data.Length));
-            at += data.Length;
+            message.Payload.Buffer.CopyTo(new Span<byte>(buffer, at, message.Payload.Buffer.Length));
+            at += message.Payload.Buffer.Length;
             buffer[at++] = (byte)'\n';
             buffer[at++] = (byte)'\n';
             await context.Response.Body.WriteAsync(buffer, 0, at);

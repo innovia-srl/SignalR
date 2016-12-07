@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace SocialWeather
 {
-    public class SocialWeatherEndPoint : EndPoint
+    public class SocialWeatherEndPoint : StreamingEndPoint
     {
         private readonly PersistentConnectionLifeTimeManager _lifetimeManager;
         private readonly FormatterResolver _formatterResolver;
@@ -19,16 +19,16 @@ namespace SocialWeather
             _logger = logger;
         }
 
-        public async override Task OnConnectedAsync(Connection connection)
+        public async override Task OnConnectedAsync(StreamingConnection connection)
         {
             _lifetimeManager.OnConnectedAsync(connection);
             await ProcessRequests(connection);
             _lifetimeManager.OnDisconnectedAsync(connection);
         }
 
-        public async Task ProcessRequests(Connection connection)
+        public async Task ProcessRequests(StreamingConnection connection)
         {
-            var stream = connection.Channel.GetStream();
+            var stream = connection.Transport.GetStream();
             var formatter = _formatterResolver.GetFormatter<WeatherReport>(
                 connection.Metadata.Get<string>("formatType"));
 
