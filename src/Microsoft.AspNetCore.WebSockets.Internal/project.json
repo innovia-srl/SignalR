@@ -31,7 +31,6 @@
   },
 
   "frameworks": {
-    "net451": {},
     "netstandard1.3": {}
   }
 }
