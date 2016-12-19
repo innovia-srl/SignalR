@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.IO.Pipelines;
 using System.Security.Claims;
+using System.Threading;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Sockets;
@@ -219,6 +220,105 @@ namespace Microsoft.AspNetCore.SignalR.Tests
             }
         }
 
+        [Fact]
+        public async Task RemoveFromGroupWhenNotInGroup()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var connection = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connection.Connection);
+
+                await connection.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var writer = invocationAdapter.GetInvocationAdapter("json");
+
+                await SendRequest_IgnoreWrite(connection.HttpConnection, writer, "GroupRemoveMethod", "testGroup");
+
+                // kill the connections
+                connection.Connection.Channel.Dispose();
+
+                await endPointTask;
+            }
+        }
+
+        [Fact]
+        public async Task HubsCanSendToUser()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var firstConnection = new ConnectionWrapper())
+            using (var secondConnection = new ConnectionWrapper())
+            {
+                var firstEndPointTask = endPoint.OnConnectedAsync(firstConnection.Connection);
+                var secondEndPointTask = endPoint.OnConnectedAsync(secondConnection.Connection);
+
+                await firstConnection.HttpConnection.Input.ReadingStarted;
+                await secondConnection.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var serializer = new JsonSerializer();
+
+                await SendRequest_IgnoreWrite(firstConnection.HttpConnection, writer, "ClientSendMethod", secondConnection.Connection.User.Identity.Name, "test");
+
+                // check that 'secondConnection' has received the group send
+                var res = await ReadConnectionOutputAsync<InvocationDescriptor>(secondConnection.HttpConnection, serializer);
+                Assert.Equal("Send", res.Method);
+                Assert.Equal(1, res.Arguments.Length);
+                Assert.Equal("test", res.Arguments[0]);
+
+                // kill the connections
+                firstConnection.Connection.Channel.Dispose();
+                secondConnection.Connection.Channel.Dispose();
+
+                await firstEndPointTask;
+                await secondEndPointTask;
+            }
+        }
+
+        [Fact]
+        public async Task HubsCanSendToConnection()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var firstConnection = new ConnectionWrapper())
+            using (var secondConnection = new ConnectionWrapper())
+            {
+                var firstEndPointTask = endPoint.OnConnectedAsync(firstConnection.Connection);
+                var secondEndPointTask = endPoint.OnConnectedAsync(secondConnection.Connection);
+
+                await firstConnection.HttpConnection.Input.ReadingStarted;
+                await secondConnection.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var serializer = new JsonSerializer();
+
+                await SendRequest_IgnoreWrite(firstConnection.HttpConnection, writer, "ConnectionSendMethod", secondConnection.Connection.ConnectionId, "test");
+
+                // check that 'secondConnection' has received the group send
+                var res = await ReadConnectionOutputAsync<InvocationDescriptor>(secondConnection.HttpConnection, serializer);
+                Assert.Equal("Send", res.Method);
+                Assert.Equal(1, res.Arguments.Length);
+                Assert.Equal("test", res.Arguments[0]);
+
+                // kill the connections
+                firstConnection.Connection.Channel.Dispose();
+                secondConnection.Connection.Channel.Dispose();
+
+                await firstEndPointTask;
+                await secondEndPointTask;
+            }
+        }
+
         private async Task<T> ReadConnectionOutputAsync<T>(HttpConnection connection, JsonSerializer serializer)
         {
             var methodResult = await connection.Output.ReadAsync();
@@ -230,6 +330,21 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
         private class MethodHub : Hub
         {
+            public Task GroupRemoveMethod(string groupName)
+            {
+                return Groups.RemoveAsync(groupName);
+            }
+
+            public Task ClientSendMethod(string userId, string message)
+            {
+                return Clients.User(userId).InvokeAsync("Send", message);
+            }
+
+            public Task ConnectionSendMethod(string connectionId, string message)
+            {
+                return Clients.Client(connectionId).InvokeAsync("Send", message);
+            }
+
             public Task GroupAddMethod(string groupName)
             {
                 return Groups.AddAsync(groupName);
@@ -319,6 +434,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
         private class ConnectionWrapper : IDisposable
         {
+            private static int ID;
             private PipelineFactory _factory;
             private HttpConnection _httpConnection;
 
@@ -334,7 +450,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
                 Connection = connectionManager.AddNewConnection(_httpConnection).Connection;
                 Connection.Metadata["formatType"] = format;
-                Connection.User = new ClaimsPrincipal(new ClaimsIdentity());
+                Connection.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, Interlocked.Increment(ref ID).ToString()) }));
             }
 
             public void Dispose()

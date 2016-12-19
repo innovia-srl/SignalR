@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO.Pipelines;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Sockets;
 using Microsoft.Extensions.Internal;
@@ -36,6 +35,11 @@ namespace Microsoft.AspNetCore.SignalR
         public override Task RemoveGroupAsync(Connection connection, string groupName)
         {
             var groups = connection.Metadata.Get<HashSet<string>>("groups");
+
+            if (groups == null)
+            {
+                return TaskCache.CompletedTask;
+            }
 
             lock (groups)
             {
@@ -103,7 +107,7 @@ namespace Microsoft.AspNetCore.SignalR
         {
             return InvokeAllWhere(methodName, args, connection =>
             {
-                return connection.User.Identity.Name == userId;
+                return string.Equals(connection.User.Identity.Name, userId);
             });
         }
 
