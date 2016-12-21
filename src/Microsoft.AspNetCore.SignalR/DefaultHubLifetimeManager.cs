@@ -107,7 +107,7 @@ namespace Microsoft.AspNetCore.SignalR
         {
             return InvokeAllWhere(methodName, args, connection =>
             {
-                return string.Equals(connection.User.Identity.Name, userId);
+                return string.Equals(connection.User.Identity.Name, userId, StringComparison.Ordinal);
             });
         }
 
