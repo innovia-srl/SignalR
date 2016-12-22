@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Sockets;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Internal;
 using Moq;
 using Moq.Protected;
 using Newtonsoft.Json;
@@ -93,10 +94,10 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await connectionWrapper.HttpConnection.Input.ReadingStarted;
 
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
-                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
 
                 // return Task<int>
-                await SendRequest(connectionWrapper.HttpConnection, writer, "TaskValueMethod");
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "TaskValueMethod");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
                 Assert.Equal(42L, res.Result);
 
@@ -121,10 +122,10 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await connectionWrapper.HttpConnection.Input.ReadingStarted;
 
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
-                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
 
                 // return int
-                await SendRequest(connectionWrapper.HttpConnection, writer, "ValueMethod");
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "ValueMethod");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
                 Assert.Equal(43L, res.Result);
 
@@ -132,6 +133,125 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 connectionWrapper.Connection.Channel.Dispose();
 
                 await endPointTask;
+            }
+        }
+
+        [Fact]
+        public async Task HubMethodCanBeStatic()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+
+                await connectionWrapper.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
+
+                // return int
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "StaticMethod");
+                var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
+                Assert.Equal("fromStatic", res.Result);
+
+                // kill the connection
+                connectionWrapper.Connection.Channel.Dispose();
+
+                await endPointTask;
+            }
+        }
+
+        [Fact]
+        public async Task HubMethodCanBeVoid()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+
+                await connectionWrapper.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
+
+                // return int
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "VoidMethod");
+                var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
+                Assert.Equal(null, res.Result);
+
+                // kill the connection
+                connectionWrapper.Connection.Channel.Dispose();
+
+                await endPointTask;
+            }
+        }
+
+        [Fact]
+        public async Task HubMethodWithMultiParam()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+
+                await connectionWrapper.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
+
+                // return int
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "MultiParamMethod", (byte)32, 42, 'm', "string");
+                var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
+                Assert.Equal((long)(32 + 42 + 'm'), res.Result);
+
+                // kill the connection
+                connectionWrapper.Connection.Channel.Dispose();
+
+                await endPointTask;
+            }
+        }
+
+        [Fact]
+        public async Task CannotCallOverriddenBaseHubMethod()
+        {
+            var serviceProvider = CreateServiceProvider();
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<MethodHub>>();
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+
+                await connectionWrapper.HttpConnection.Input.ReadingStarted;
+
+                var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
+
+                // return int
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "OnDisconnectedAsync");
+
+                await Task.Delay(1000);
+                // kill the connection
+                connectionWrapper.Connection.Channel.Dispose();
+
+                try
+                {
+                    await endPointTask;
+                    Assert.True(false);
+                }
+                catch (Exception)
+                {
+                    // TODO
+                }
             }
         }
 
@@ -151,9 +271,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await Task.WhenAll(firstConnection.HttpConnection.Input.ReadingStarted, secondConnection.HttpConnection.Input.ReadingStarted);
 
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
-                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                await SendRequest(firstConnection.HttpConnection, writer, "BroadcastMethod", "test");
+                await SendRequest(firstConnection.HttpConnection, adapter, "BroadcastMethod", "test");
 
                 foreach (var res in await Task.WhenAll(
                     ReadConnectionOutputAsync<InvocationDescriptor>(firstConnection.HttpConnection),
@@ -188,15 +308,15 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await Task.WhenAll(firstConnection.HttpConnection.Input.ReadingStarted, secondConnection.HttpConnection.Input.ReadingStarted);
 
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
-                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                await SendRequest_IgnoreReceive(firstConnection.HttpConnection, writer, "GroupSendMethod", "testGroup", "test");
+                await SendRequest_IgnoreReceive(firstConnection.HttpConnection, adapter, "GroupSendMethod", "testGroup", "test");
                 // check that 'secondConnection' hasn't received the group send
                 Assert.False(secondConnection.HttpConnection.Output.ReadAsync().IsCompleted);
 
-                await SendRequest_IgnoreReceive(secondConnection.HttpConnection, writer, "GroupAddMethod", "testGroup");
+                await SendRequest_IgnoreReceive(secondConnection.HttpConnection, adapter, "GroupAddMethod", "testGroup");
 
-                await SendRequest(firstConnection.HttpConnection, writer, "GroupSendMethod", "testGroup", "test");
+                await SendRequest(firstConnection.HttpConnection, adapter, "GroupSendMethod", "testGroup", "test");
                 // check that 'firstConnection' hasn't received the group send
                 Assert.False(firstConnection.HttpConnection.Output.ReadAsync().IsCompleted);
 
@@ -255,9 +375,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await Task.WhenAll(firstConnection.HttpConnection.Input.ReadingStarted, secondConnection.HttpConnection.Input.ReadingStarted);
 
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
-                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                await SendRequest_IgnoreReceive(firstConnection.HttpConnection, writer, "ClientSendMethod", secondConnection.Connection.User.Identity.Name, "test");
+                await SendRequest_IgnoreReceive(firstConnection.HttpConnection, adapter, "ClientSendMethod", secondConnection.Connection.User.Identity.Name, "test");
 
                 // check that 'secondConnection' has received the group send
                 var res = await ReadConnectionOutputAsync<InvocationDescriptor>(secondConnection.HttpConnection);
@@ -289,9 +409,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await Task.WhenAll(firstConnection.HttpConnection.Input.ReadingStarted, secondConnection.HttpConnection.Input.ReadingStarted);
 
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
-                var writer = invocationAdapter.GetInvocationAdapter("json");
+                var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                await SendRequest_IgnoreReceive(firstConnection.HttpConnection, writer, "ConnectionSendMethod", secondConnection.Connection.ConnectionId, "test");
+                await SendRequest_IgnoreReceive(firstConnection.HttpConnection, adapter, "ConnectionSendMethod", secondConnection.Connection.ConnectionId, "test");
 
                 // check that 'secondConnection' has received the group send
                 var res = await ReadConnectionOutputAsync<InvocationDescriptor>(secondConnection.HttpConnection);
@@ -348,6 +468,25 @@ namespace Microsoft.AspNetCore.SignalR.Tests
             {
                 return 43;
             }
+
+            static public string StaticMethod()
+            {
+                return "fromStatic";
+            }
+
+            public void VoidMethod()
+            {
+            }
+
+            public int MultiParamMethod(byte b, int i, char c, string s)
+            {
+                return c + i + b;
+            }
+
+            public override Task OnDisconnectedAsync()
+            {
+                return TaskCache.CompletedTask;
+            }
         }
 
         private class TestHub : Hub
@@ -401,6 +540,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
         private async Task<T> ReadConnectionOutputAsync<T>(HttpConnection connection)
         {
+            // TODO: other formats?
             var methodResult = await connection.Output.ReadAsync();
             var serializer = new JsonSerializer();
             var res = serializer.Deserialize<T>(new JsonTextReader(new StreamReader(new MemoryStream(methodResult.Buffer.ToArray()))));
