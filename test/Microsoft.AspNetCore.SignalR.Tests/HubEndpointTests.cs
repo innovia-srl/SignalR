@@ -96,9 +96,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
                 var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                // return Task<int>
                 await SendRequest(connectionWrapper.HttpConnection, adapter, "TaskValueMethod");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
+                // json serializer makes this a long
                 Assert.Equal(42L, res.Result);
 
                 // kill the connection
@@ -124,9 +124,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
                 var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                // return int
                 await SendRequest(connectionWrapper.HttpConnection, adapter, "ValueMethod");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
+                // json serializer makes this a long
                 Assert.Equal(43L, res.Result);
 
                 // kill the connection
@@ -152,7 +152,6 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
                 var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                // return int
                 await SendRequest(connectionWrapper.HttpConnection, adapter, "StaticMethod");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
                 Assert.Equal("fromStatic", res.Result);
@@ -180,7 +179,6 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
                 var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                // return int
                 await SendRequest(connectionWrapper.HttpConnection, adapter, "VoidMethod");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
                 Assert.Equal(null, res.Result);
@@ -208,10 +206,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
                 var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                // return int
-                await SendRequest(connectionWrapper.HttpConnection, adapter, "MultiParamMethod", (byte)32, 42, 'm', "string");
+                await SendRequest(connectionWrapper.HttpConnection, adapter, "ConcatString", (byte)32, 42, 'm', "string");
                 var res = await ReadConnectionOutputAsync<InvocationResultDescriptor>(connectionWrapper.HttpConnection);
-                Assert.Equal((long)(32 + 42 + 'm'), res.Result);
+                Assert.Equal("32, 42, m, string", res.Result);
 
                 // kill the connection
                 connectionWrapper.Connection.Channel.Dispose();
@@ -236,10 +233,8 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 var invocationAdapter = serviceProvider.GetService<InvocationAdapterRegistry>();
                 var adapter = invocationAdapter.GetInvocationAdapter("json");
 
-                // return int
                 await SendRequest(connectionWrapper.HttpConnection, adapter, "OnDisconnectedAsync");
 
-                await Task.Delay(1000);
                 // kill the connection
                 connectionWrapper.Connection.Channel.Dispose();
 
@@ -248,9 +243,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                     await endPointTask;
                     Assert.True(false);
                 }
-                catch (Exception)
+                catch (InvalidOperationException ex)
                 {
-                    // TODO
+                    Assert.Equal("The hub method 'OnDisconnectedAsync' could not be resolved.", ex.Message);
                 }
             }
         }
@@ -478,9 +473,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
             {
             }
 
-            public int MultiParamMethod(byte b, int i, char c, string s)
+            public string ConcatString(byte b, int i, char c, string s)
             {
-                return c + i + b;
+                return $"{b}, {i}, {c}, {s}";
             }
 
             public override Task OnDisconnectedAsync()
