@@ -235,12 +235,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
                 await SendRequest(connectionWrapper.HttpConnection, adapter, "OnDisconnectedAsync");
 
-                // kill the connection
-                connectionWrapper.Connection.Channel.Dispose();
-
                 try
                 {
-                    await endPointTask;
+                    await connectionWrapper.HttpConnection.Output.ReadAsync();
                     Assert.True(false);
                 }
                 catch (InvalidOperationException ex)
@@ -478,7 +475,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 return $"{b}, {i}, {c}, {s}";
             }
 
-            public override Task OnDisconnectedAsync()
+            public override Task OnDisconnectedAsync(Exception e)
             {
                 return TaskCache.CompletedTask;
             }
