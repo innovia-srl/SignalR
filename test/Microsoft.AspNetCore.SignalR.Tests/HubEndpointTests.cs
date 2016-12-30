@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
-using Moq.Protected;
 using Xunit;
 
 namespace Microsoft.AspNetCore.SignalR.Tests
@@ -67,6 +66,120 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 await endPointTask;
 
                 Mock.Get(hub).Verify(h => h.OnDisconnectedAsync(It.IsNotNull<Exception>()), Times.Once());
+            }
+        }
+
+        [Fact]
+        public async Task ExceptionsThrownWhenCreatingHubsAreHandled()
+        {
+            var hub = Mock.Of<Hub>();
+
+            var endPointType = GetEndPointType(hub.GetType());
+            var serviceProvider = CreateServiceProvider(s =>
+            {
+                s.AddSingleton(endPointType);
+                s.AddTransient(hub.GetType(), sp => { throw new InvalidOperationException("Creating hub failed."); });
+            });
+
+            dynamic endPoint = serviceProvider.GetService(endPointType);
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+                connectionWrapper.Connection.Channel.Dispose();
+                await endPointTask;
+                Assert.True(endPointTask.IsCompleted);
+            }
+        }
+
+        [Fact]
+        public async Task LifetimeManagerOnDisconnectedAsyncCalledIfLifetimeManagerOnConnectedAsyncThrows()
+        {
+            var mockLifetimeManager = new Mock<HubLifetimeManager<Hub>>();
+            mockLifetimeManager
+                .Setup(m => m.OnConnectedAsync(It.IsAny<Connection>()))
+                .Throws(new InvalidOperationException("Lifetime manager OnConnectedAsync failed"));
+            var mockHubActivator = new Mock<IHubActivator<Hub, IClientProxy>>();
+
+            var serviceProvider = CreateServiceProvider(services =>
+            {
+                services.AddSingleton(mockLifetimeManager.Object);
+                services.AddSingleton(mockHubActivator.Object);
+            });
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<Hub>>();
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+                connectionWrapper.Connection.Channel.Dispose();
+                await endPointTask;
+                Assert.True(endPointTask.IsCompleted);
+
+                mockLifetimeManager.Verify(m => m.OnConnectedAsync(It.IsAny<Connection>()), Times.Once);
+                mockLifetimeManager.Verify(m => m.OnDisconnectedAsync(It.IsAny<Connection>()), Times.Once);
+                // No hubs should be created since the connection is terminated
+                mockHubActivator.Verify(m => m.Create(), Times.Never);
+                mockHubActivator.Verify(m => m.Release(It.IsAny<Hub>()), Times.Never);
+            }
+        }
+
+        [Fact]
+        public async Task HubOnDisconnectedAsyncCalledIfHubOnConnectedAsyncThrows()
+        {
+            var mockHub = new Mock<Hub>();
+            mockHub.Setup(h => h.OnConnectedAsync()).Throws(new InvalidOperationException("Hub OnConnectedAsync failed"));
+            var hubType = mockHub.Object.GetType();
+
+            var endPointType = GetEndPointType(hubType);
+            var serviceProvider = CreateServiceProvider(services =>
+            {
+                services.AddSingleton(endPointType);
+                services.AddTransient(hubType, sp => mockHub.Object);
+            });
+
+            dynamic endPoint = serviceProvider.GetService(endPointType);
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+                connectionWrapper.Connection.Channel.Dispose();
+                await endPointTask;
+                Assert.True(endPointTask.IsCompleted);
+                mockHub.Verify(h => h.OnDisconnectedAsync(null), Times.Once());
+            }
+        }
+
+        [Fact]
+        public async Task LifetimeManagerOnDisconnectedAsyncCalledIfHubOnDisconnectedAsyncThrows()
+        {
+            var mockLifetimeManager = new Mock<HubLifetimeManager<Hub>>();
+            var mockHubActivator = new Mock<IHubActivator<Hub, IClientProxy>>();
+            mockHubActivator
+                .Setup(a => a.Create())
+                .Throws(new InvalidOperationException("Can't create hub"));
+
+            var serviceProvider = CreateServiceProvider(services =>
+            {
+                services.AddSingleton(mockLifetimeManager.Object);
+                services.AddSingleton(mockHubActivator.Object);
+            });
+
+            var endPoint = serviceProvider.GetService<HubEndPoint<Hub>>();
+
+            using (var connectionWrapper = new ConnectionWrapper())
+            {
+                var endPointTask = endPoint.OnConnectedAsync(connectionWrapper.Connection);
+                connectionWrapper.Connection.Channel.Dispose();
+                await endPointTask;
+                Assert.True(endPointTask.IsCompleted);
+
+                mockLifetimeManager.Verify(m => m.OnConnectedAsync(It.IsAny<Connection>()), Times.Once);
+                mockLifetimeManager.Verify(m => m.OnDisconnectedAsync(It.IsAny<Connection>()), Times.Once);
+
+                // Activator called twice - for OnConnectedAsync and OnDisconnectedAsync
+                mockHubActivator.Verify(m => m.Create(), Times.Exactly(2));
+                mockHubActivator.Verify(m => m.Release(It.IsAny<Hub>()), Times.Never);
             }
         }
 
